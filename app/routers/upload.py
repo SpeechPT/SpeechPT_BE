@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,9 +23,56 @@ DUMMY_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 DUMMY_BUCKET = "speechpt-dev"
 DUMMY_EXPIRES_IN = 900
 
+ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".ppt", ".pptx"}
+ALLOWED_AUDIO_EXTENSIONS = {".wav"}
+ALLOWED_DOCUMENT_MIME_TYPES = {
+    "application/pdf",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+ALLOWED_AUDIO_MIME_TYPES = {"audio/wav", "audio/x-wav", "audio/wave"}
+
+
+def validate_upload_request(payload: UploadPresignRequest):
+    extension = Path(payload.file_name).suffix.lower()
+    content_type = payload.content_type or ""
+
+    if payload.kind == "document":
+        if extension not in ALLOWED_DOCUMENT_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="허용된 문서 형식은 PDF, PPT, PPTX 입니다.",
+            )
+
+        if content_type and content_type != "application/octet-stream" and content_type not in ALLOWED_DOCUMENT_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="허용된 문서 MIME 타입은 PDF 또는 PPT/PPTX 입니다.",
+            )
+
+    elif payload.kind == "audio":
+        if extension not in ALLOWED_AUDIO_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="허용된 음성 형식은 WAV 입니다.",
+            )
+
+        if content_type and content_type != "application/octet-stream" and content_type not in ALLOWED_AUDIO_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="허용된 음성 MIME 타입은 WAV 입니다.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="kind는 document 또는 audio 이어야 합니다.",
+        )
+
 
 @router.post("/presign", response_model=UploadPresignResponse, status_code=status.HTTP_200_OK)
 def create_upload_presign(payload: UploadPresignRequest, db: Session = Depends(get_db)):
+    validate_upload_request(payload)
+
     upload_id = uuid.uuid4()
     object_key = f"notes/{payload.note_id or 'unassigned'}/uploads/{upload_id}/{payload.file_name}"
 

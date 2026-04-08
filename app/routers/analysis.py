@@ -1,9 +1,8 @@
-
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.db import get_db
 from app.models.analysis import Analysis
@@ -37,6 +36,13 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="노트를 찾을 수 없습니다.",
+        )
+
+    # 파일이 없으면 분석을 시작하지 않음
+    if payload.document_upload_id is None or payload.audio_upload_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="분석을 위해서는 문서와 음성 파일이 모두 필요합니다.",
         )
 
     document_upload = (
@@ -87,17 +93,24 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
         pipeline_version=payload.pipeline_version,
         model_version_ce=payload.model_version_ce,
         model_version_ae=payload.model_version_ae,
-        status="queued",
-        progress=0,
-        stage="ingest",
+        status="running",
+        progress=30,
+        stage="analyzing",
         trigger_type="manual",
         worker_id=None,
         error_code=None,
         error_message=None,
-        started_at=None,
+        started_at=func.now(),
         finished_at=None,
     )
     db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    analysis.status = "done"
+    analysis.progress = 100
+    analysis.stage = "finished"
+    analysis.finished_at = func.now()
     db.commit()
     db.refresh(analysis)
 
@@ -140,15 +153,63 @@ def get_analysis_result(analysis_id: UUID, db: Session = Depends(get_db)):
             detail="분석 정보를 찾을 수 없습니다.",
         )
 
+ # 아직 분석 안 끝났으면
     if analysis.status != "done":
         return {
             "analysis_id": analysis.analysis_id,
             "status": analysis.status,
-            "message": "아직 최종 분석 결과가 생성되지 않았습니다.",
+            "is_ready": False,
+            "scores": None,
+            "summary": None,
+            "strengths": [],
+            "improvements": [],
+            "sections": [],
         }
 
+    # 분석 완료됐으면 (현재는 mock 데이터)
     return {
         "analysis_id": analysis.analysis_id,
         "status": analysis.status,
-        "message": "추후 analysis_results, analysis_sections와 연결 예정입니다.",
+        "is_ready": True,
+        "scores": {
+            "content_coverage": 82,
+            "delivery_stability": 76,
+            "pacing_score": 69,
+        },
+        "summary": "전반적인 발표 흐름은 안정적이지만, 후반부로 갈수록 말속도가 빨라지고 일부 구간에서 발화 안정성이 낮아졌습니다.",
+        "strengths": [
+            {"text": "핵심 메시지 전달이 비교적 명확합니다."},
+            {"text": "슬라이드 흐름과 발화 내용의 전반적인 정합성이 좋습니다."},
+        ],
+        "improvements": [
+            {"text": "후반부 말속도가 빨라져 전달력이 떨어집니다."},
+            {"text": "일부 구간에서 발화가 급해지며 안정성이 낮아집니다."},
+        ],
+        "sections": [
+            {
+                "section_index": 1,
+                "title": "도입부",
+                "start_time_sec": 0,
+                "end_time_sec": 22,
+                "score": 84,
+                "feedback": "도입은 안정적이지만 말속도가 살짝 빠릅니다.",
+            },
+            {
+                "section_index": 2,
+                "title": "핵심 내용 설명",
+                "start_time_sec": 23,
+                "end_time_sec": 58,
+                "score": 78,
+                "feedback": "슬라이드와 설명은 잘 맞지만 핵심 단어 강조가 약합니다.",
+            },
+            {
+                "section_index": 3,
+                "title": "마무리",
+                "start_time_sec": 59,
+                "end_time_sec": 83,
+                "score": 65,
+                "feedback": "마무리 구간에서 말속도가 빨라지고 안정감이 떨어집니다.",
+            },
+        ],
     }
+# 아직 점수나 리포트내용은 더미데이터로 처리
