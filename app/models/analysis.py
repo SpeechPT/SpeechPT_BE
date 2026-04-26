@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -43,18 +44,18 @@ class Analysis(Base):
         nullable=False,
     )
     pipeline_version: Mapped[str] = mapped_column(String(50), nullable=False)
-    model_version_ce: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    model_version_ae: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_version_ce: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    model_version_ae: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     progress: Mapped[int] = mapped_column(nullable=False, default=0)
     stage: Mapped[str] = mapped_column(String(20), nullable=False, default="ingest")
-    trigger_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    worker_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    started_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    finished_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="analyses")
     note = relationship("Note", back_populates="analyses")

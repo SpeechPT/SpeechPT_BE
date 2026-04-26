@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.core.deps import get_current_user
 from app.db import get_db
 from app.models.analysis import Analysis
 from app.models.note import Note
 from app.models.upload import Upload
+from app.models.user import User
 from app.schemas.analysis import (
     AnalysisCreateRequest,
     AnalysisCreateResponse,
@@ -17,19 +19,21 @@ from app.schemas.analysis import (
 
 router = APIRouter(tags=["analyses"])
 
-# 임시 고정 user_id, 나중에 auth 붙이면 current_user.user_id 로 교체
-DUMMY_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
-
 
 @router.post(
     "/notes/{note_id}/analyses",
     response_model=AnalysisCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session = Depends(get_db)):
+def create_analysis(
+    note_id: UUID,
+    payload: AnalysisCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     note = (
         db.query(Note)
-        .filter(Note.note_id == note_id, Note.user_id == DUMMY_USER_ID)
+        .filter(Note.note_id == note_id, Note.user_id == current_user.user_id)
         .first()
     )
     if note is None:
@@ -49,7 +53,7 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
         db.query(Upload)
         .filter(
             Upload.upload_id == payload.document_upload_id,
-            Upload.user_id == DUMMY_USER_ID,
+            Upload.user_id == current_user.user_id,
             Upload.note_id == note_id,
         )
         .first()
@@ -69,7 +73,7 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
         db.query(Upload)
         .filter(
             Upload.upload_id == payload.audio_upload_id,
-            Upload.user_id == DUMMY_USER_ID,
+            Upload.user_id == current_user.user_id,
             Upload.note_id == note_id,
         )
         .first()
@@ -87,7 +91,7 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
 
     analysis = Analysis(
         note_id=note_id,
-        user_id=DUMMY_USER_ID,
+        user_id=current_user.user_id,
         document_upload_id=payload.document_upload_id,
         audio_upload_id=payload.audio_upload_id,
         pipeline_version=payload.pipeline_version,
@@ -123,10 +127,14 @@ def create_analysis(note_id: UUID, payload: AnalysisCreateRequest, db: Session =
 
 
 @router.get("/analyses/{analysis_id}/status", response_model=AnalysisStatusResponse)
-def get_analysis_status(analysis_id: UUID, db: Session = Depends(get_db)):
+def get_analysis_status(
+    analysis_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     analysis = (
         db.query(Analysis)
-        .filter(Analysis.analysis_id == analysis_id, Analysis.user_id == DUMMY_USER_ID)
+        .filter(Analysis.analysis_id == analysis_id, Analysis.user_id == current_user.user_id)
         .first()
     )
 
@@ -140,10 +148,14 @@ def get_analysis_status(analysis_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/analyses/{analysis_id}/result", response_model=AnalysisResultResponse)
-def get_analysis_result(analysis_id: UUID, db: Session = Depends(get_db)):
+def get_analysis_result(
+    analysis_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     analysis = (
         db.query(Analysis)
-        .filter(Analysis.analysis_id == analysis_id, Analysis.user_id == DUMMY_USER_ID)
+        .filter(Analysis.analysis_id == analysis_id, Analysis.user_id == current_user.user_id)
         .first()
     )
 

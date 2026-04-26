@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -27,7 +28,7 @@ class Upload(Base):
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
     )
-    note_id: Mapped[uuid.UUID | None] = mapped_column(
+    note_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("notes.note_id", ondelete="SET NULL"),
         nullable=True,
@@ -37,10 +38,10 @@ class Upload(Base):
     bucket: Mapped[str] = mapped_column(String(200), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    checksum: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

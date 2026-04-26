@@ -1,11 +1,18 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 from app.db import Base, engine 
 from app import models
 from app.routers.note import router as note_router  
 from app.routers.upload import router as upload_router
 from app.routers.analysis import router as analysis_router
+from app.routers.auth import router as auth_router
 
 app = FastAPI(title="SpeechPT API")
 
@@ -18,6 +25,7 @@ app.add_middleware(
 )
 
 
+app.include_router(auth_router)
 app.include_router(note_router)
 app.include_router(upload_router)
 app.include_router(analysis_router)

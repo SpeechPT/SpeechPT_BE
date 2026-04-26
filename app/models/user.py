@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -16,10 +17,10 @@ class User(Base):
         default=uuid.uuid4,
     )
     email: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="local")
-    provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     notes = relationship("Note", back_populates="user", cascade="all, delete-orphan")
