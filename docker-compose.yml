@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: speechpt-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: SPusers
+      POSTGRES_PASSWORD: 1125
+      POSTGRES_DB: SpeechPT
+    ports:
+      - "5433:5432"
+    volumes:
+      - speechpt_pgdata:/var/lib/postgresql/data
+
+volumes:
+  speechpt_pgdata:

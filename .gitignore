@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+local_uploads/
+speechpt_backup.sql
+speechpt_local_backup_*.sql
