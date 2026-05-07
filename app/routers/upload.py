@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
+from app.core.s3 import head_object as s3_head_object
 from app.db import get_db
 from app.models.upload import Upload
 from app.models.user import User
@@ -228,6 +229,28 @@ def complete_upload(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="업로드 정보를 찾을 수 없습니다.",
         )
+
+    # S3 업로드인 경우 실제로 파일이 도착했는지 검증
+    if upload.storage == "s3":
+        head = s3_head_object(upload.object_key, bucket=upload.bucket)
+        if head is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="S3에서 파일을 찾을 수 없습니다. 업로드를 다시 시도하세요.",
+            )
+
+        actual_size = head.get("ContentLength")
+        if actual_size is not None and actual_size != upload.size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"파일 크기 불일치: 예상 {upload.size_bytes}, 실제 {actual_size}",
+            )
+
+        # S3가 자동 발급하는 ETag를 checksum으로 저장 (사용자 제공값 우선)
+        if payload.checksum is None:
+            etag = head.get("ETag", "").strip('"')
+            if etag:
+                upload.checksum = etag
 
     upload.status = "uploaded"
     if payload.checksum is not None:

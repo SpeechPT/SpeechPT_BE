@@ -1,32 +1,44 @@
-from pathlib import Path
+"""분석 트리거 + 상태/결과 조회 라우터.
+
+흐름:
+1. POST /notes/{note_id}/analyses
+   - analyses 테이블에 status=queued로 INSERT
+   - analysis_inputs 테이블에 S3 키 저장
+   - SQS에 작업 메시지 enqueue
+   - 즉시 응답 (Worker가 백그라운드 처리)
+
+2. GET /analyses/{analysis_id}/status
+   - analyses 테이블 조회 → progress, stage 반환
+
+3. GET /analyses/{analysis_id}/result
+   - status=done이면 analysis_results 테이블에서 점수+report 로드
+   - 아니면 is_ready=False
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.core.deps import get_current_user
+from app.core.sqs import enqueue_analysis
 from app.db import get_db
 from app.models.analysis import Analysis
+from app.models.analysis_input import AnalysisInput
+from app.models.analysis_result import AnalysisResult
 from app.models.note import Note
 from app.models.upload import Upload
 from app.models.user import User
-from app.routers.upload import ROOT_DIR
 from app.schemas.analysis import (
     AnalysisCreateRequest,
     AnalysisCreateResponse,
     AnalysisResultResponse,
     AnalysisStatusResponse,
 )
-from app.services.audio_preprocess import normalize_audio_for_engine
 
 router = APIRouter(tags=["analyses"])
-
-ENGINE_AUDIO_DIR = ROOT_DIR / "engine_audio"
-
-
-def analysis_safe_name(note_id: UUID) -> str:
-    return str(note_id).replace("-", "")
 
 
 @router.post(
@@ -40,6 +52,7 @@ def create_analysis(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # ── 1. 노트 소유 검증 ─────────────────────────────────────
     note = (
         db.query(Note)
         .filter(Note.note_id == note_id, Note.user_id == current_user.user_id)
@@ -51,13 +64,13 @@ def create_analysis(
             detail="노트를 찾을 수 없습니다.",
         )
 
-    # 파일이 없으면 분석을 시작하지 않음
     if payload.document_upload_id is None or payload.audio_upload_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="분석을 위해서는 문서와 음성 파일이 모두 필요합니다.",
         )
 
+    # ── 2. 업로드 검증 ────────────────────────────────────────
     document_upload = (
         db.query(Upload)
         .filter(
@@ -98,37 +111,7 @@ def create_analysis(
             detail="음성 파일 업로드가 아직 완료되지 않았습니다.",
         )
 
-    if document_upload.storage != "local" or not document_upload.url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="현재 분석 파이프라인은 로컬에 저장된 발표 자료 파일만 지원합니다.",
-        )
-
-    if audio_upload.storage != "local" or not audio_upload.url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="현재 분석 파이프라인은 로컬에 저장된 음성 파일만 지원합니다.",
-        )
-
-    pdf_path = Path(document_upload.url)
-    if pdf_path.suffix.lower() != ".pdf":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="현재 분석 엔진은 PDF 발표 자료만 지원합니다. PDF 파일을 업로드해주세요.",
-        )
-
-    original_audio_path = Path(audio_upload.url)
-    normalized_audio_path = normalize_audio_for_engine(
-        original_audio_path,
-        ENGINE_AUDIO_DIR / f"{analysis_safe_name(note_id)}_{audio_upload.upload_id}.wav",
-    )
-
-    engine_request_payload = {
-        "normalized_audio_path": str(normalized_audio_path),
-        "original_audio_filename": audio_upload.original_filename,
-        "pdf_path": str(pdf_path),
-    }
-
+    # ── 3. analyses 행 INSERT (status=queued) ────────────────
     analysis = Analysis(
         note_id=note_id,
         user_id=current_user.user_id,
@@ -137,26 +120,62 @@ def create_analysis(
         pipeline_version=payload.pipeline_version,
         model_version_ce=payload.model_version_ce,
         model_version_ae=payload.model_version_ae,
-        status="running",
-        progress=30,
-        stage="analyzing",
+        status="queued",
+        progress=0,
+        stage="ingest",
         trigger_type="manual",
         worker_id=None,
         error_code=None,
-        error_message=f"engine_request={engine_request_payload}",
-        started_at=func.now(),
+        error_message=None,
+        started_at=None,
         finished_at=None,
     )
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
 
-    analysis.status = "done"
-    analysis.progress = 100
-    analysis.stage = "finished"
-    analysis.finished_at = func.now()
+    # ── 4. analysis_inputs 행 INSERT ──────────────────────────
+    analysis_input = AnalysisInput(
+        analysis_id=analysis.analysis_id,
+        document_path=_storage_uri(document_upload),
+        audio_path=_storage_uri(audio_upload),
+    )
+    db.add(analysis_input)
     db.commit()
-    db.refresh(analysis)
+
+    # ── 5. SQS enqueue ────────────────────────────────────────
+    try:
+        enqueue_analysis({
+            "analysis_id": str(analysis.analysis_id),
+            "user_id": str(current_user.user_id),
+            "note_id": str(note_id),
+            "document": {
+                "storage": document_upload.storage,
+                "bucket": document_upload.bucket,
+                "object_key": document_upload.object_key,
+                "filename": document_upload.original_filename,
+            },
+            "audio": {
+                "storage": audio_upload.storage,
+                "bucket": audio_upload.bucket,
+                "object_key": audio_upload.object_key,
+                "filename": audio_upload.original_filename,
+            },
+            "pipeline_version": payload.pipeline_version,
+            "model_version_ce": payload.model_version_ce,
+            "model_version_ae": payload.model_version_ae,
+            "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        # 큐 enqueue 실패 시 분석을 failed로 마킹
+        analysis.status = "failed"
+        analysis.error_code = "ENQUEUE_FAILED"
+        analysis.error_message = str(exc)[:500]
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"분석 작업 큐 등록에 실패했습니다: {exc}",
+        )
 
     return {
         "analysis_id": analysis.analysis_id,
@@ -164,6 +183,13 @@ def create_analysis(
         "progress": analysis.progress,
         "stage": analysis.stage,
     }
+
+
+def _storage_uri(upload: Upload) -> str:
+    """Upload의 위치를 단일 문자열로 표현."""
+    if upload.storage == "s3":
+        return f"s3://{upload.bucket}/{upload.object_key}"
+    return upload.url or upload.object_key
 
 
 @router.get("/analyses/{analysis_id}/status", response_model=AnalysisStatusResponse)
@@ -205,7 +231,7 @@ def get_analysis_result(
             detail="분석 정보를 찾을 수 없습니다.",
         )
 
- # 아직 분석 안 끝났으면
+    # 분석이 끝나지 않았으면 빈 응답
     if analysis.status != "done":
         return {
             "analysis_id": analysis.analysis_id,
@@ -218,50 +244,33 @@ def get_analysis_result(
             "sections": [],
         }
 
-    # 분석 완료됐으면 (현재는 mock 데이터)
+    # analysis_results 테이블에서 결과 로드
+    result_row = (
+        db.query(AnalysisResult)
+        .filter(AnalysisResult.analysis_id == analysis_id)
+        .first()
+    )
+
+    if result_row is None:
+        # 데이터 정합성 문제: status=done인데 결과 row가 없음
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="분석 결과 행이 존재하지 않습니다. 관리자에게 문의하세요.",
+        )
+
+    report = result_row.report_json or {}
+
     return {
         "analysis_id": analysis.analysis_id,
         "status": analysis.status,
         "is_ready": True,
         "scores": {
-            "content_coverage": 82,
-            "delivery_stability": 76,
-            "pacing_score": 69,
+            "content_coverage": result_row.content_coverage,
+            "delivery_stability": result_row.delivery_stability,
+            "pacing_score": result_row.pacing_score,
         },
-        "summary": "전반적인 발표 흐름은 안정적이지만, 후반부로 갈수록 말속도가 빨라지고 일부 구간에서 발화 안정성이 낮아졌습니다.",
-        "strengths": [
-            {"text": "핵심 메시지 전달이 비교적 명확합니다."},
-            {"text": "슬라이드 흐름과 발화 내용의 전반적인 정합성이 좋습니다."},
-        ],
-        "improvements": [
-            {"text": "후반부 말속도가 빨라져 전달력이 떨어집니다."},
-            {"text": "일부 구간에서 발화가 급해지며 안정성이 낮아집니다."},
-        ],
-        "sections": [
-            {
-                "section_index": 1,
-                "title": "도입부",
-                "start_time_sec": 0,
-                "end_time_sec": 22,
-                "score": 84,
-                "feedback": "도입은 안정적이지만 말속도가 살짝 빠릅니다.",
-            },
-            {
-                "section_index": 2,
-                "title": "핵심 내용 설명",
-                "start_time_sec": 23,
-                "end_time_sec": 58,
-                "score": 78,
-                "feedback": "슬라이드와 설명은 잘 맞지만 핵심 단어 강조가 약합니다.",
-            },
-            {
-                "section_index": 3,
-                "title": "마무리",
-                "start_time_sec": 59,
-                "end_time_sec": 83,
-                "score": 65,
-                "feedback": "마무리 구간에서 말속도가 빨라지고 안정감이 떨어집니다.",
-            },
-        ],
+        "summary": report.get("summary"),
+        "strengths": report.get("strengths", []),
+        "improvements": report.get("improvements", []),
+        "sections": report.get("sections", []),
     }
-# 아직 점수나 리포트내용은 더미데이터로 처리

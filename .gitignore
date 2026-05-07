@@ -6,4 +6,4 @@ __pycache__/
 .env
 local_uploads/
 speechpt_backup.sql
-# speechpt_local_backup_*.sql
+speechpt_local_backup_*.sql
