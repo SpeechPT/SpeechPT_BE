@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,3 +73,57 @@ class AnalysisResultResponse(BaseModel):
     strengths: list[AnalysisStrengthItem] = Field(default_factory=list)
     improvements: list[AnalysisImprovementItem] = Field(default_factory=list)
     sections: list[AnalysisSectionResponse] = Field(default_factory=list)
+
+
+# ──────────────────────────────────────────
+# analysis_inputs 스키마
+# ──────────────────────────────────────────
+
+class AnalysisInputResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    analysis_id: UUID
+    document_path: str
+    audio_path: str
+    slide_timestamps_s3_key: Optional[str]
+    whisper_words_s3_key: Optional[str]
+    config_yaml_path: Optional[str]
+    created_at: datetime
+
+
+# ──────────────────────────────────────────
+# analysis_results 스키마
+# ──────────────────────────────────────────
+
+class AnalysisResultDBResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    analysis_id: UUID
+    content_coverage: int
+    delivery_stability: int
+    pacing_score: int
+    overall_score: int
+    severity_json: Any
+    report_json: Any
+    result_blob_s3_key: Optional[str]
+    created_at: datetime
+
+
+# ──────────────────────────────────────────
+# analysis_sections 스키마
+# ──────────────────────────────────────────
+
+class AnalysisSectionDBResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    section_id: UUID
+    analysis_id: UUID
+    order_index: int
+    title: str
+    start_time_sec: Optional[int]
+    end_time_sec: Optional[int]
+    slide_range_json: Optional[Any]
+    targets_json: Optional[Any]
+    feedback_json: Optional[Any]
+    score_json: Optional[Any]
+    created_at: datetime

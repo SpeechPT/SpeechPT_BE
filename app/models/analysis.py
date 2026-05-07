@@ -59,3 +59,8 @@ class Analysis(Base):
 
     user = relationship("User", back_populates="analyses")
     note = relationship("Note", back_populates="analyses")
+    input = relationship("AnalysisInput", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
+    result = relationship("AnalysisResult", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
+    sections = relationship("AnalysisSection", back_populates="analysis", cascade="all, delete-orphan", order_by="AnalysisSection.order_index")
+    practice_sessions = relationship("PracticeSession", back_populates="analysis", cascade="all, delete-orphan")
+    chat_messages = relationship("ChatMessage", back_populates="related_analysis")

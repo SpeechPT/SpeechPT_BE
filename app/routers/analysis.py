@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,14 +11,22 @@ from app.models.analysis import Analysis
 from app.models.note import Note
 from app.models.upload import Upload
 from app.models.user import User
+from app.routers.upload import ROOT_DIR
 from app.schemas.analysis import (
     AnalysisCreateRequest,
     AnalysisCreateResponse,
     AnalysisResultResponse,
     AnalysisStatusResponse,
 )
+from app.services.audio_preprocess import normalize_audio_for_engine
 
 router = APIRouter(tags=["analyses"])
+
+ENGINE_AUDIO_DIR = ROOT_DIR / "engine_audio"
+
+
+def analysis_safe_name(note_id: UUID) -> str:
+    return str(note_id).replace("-", "")
 
 
 @router.post(
@@ -89,6 +98,37 @@ def create_analysis(
             detail="음성 파일 업로드가 아직 완료되지 않았습니다.",
         )
 
+    if document_upload.storage != "local" or not document_upload.url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 분석 파이프라인은 로컬에 저장된 발표 자료 파일만 지원합니다.",
+        )
+
+    if audio_upload.storage != "local" or not audio_upload.url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 분석 파이프라인은 로컬에 저장된 음성 파일만 지원합니다.",
+        )
+
+    pdf_path = Path(document_upload.url)
+    if pdf_path.suffix.lower() != ".pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 분석 엔진은 PDF 발표 자료만 지원합니다. PDF 파일을 업로드해주세요.",
+        )
+
+    original_audio_path = Path(audio_upload.url)
+    normalized_audio_path = normalize_audio_for_engine(
+        original_audio_path,
+        ENGINE_AUDIO_DIR / f"{analysis_safe_name(note_id)}_{audio_upload.upload_id}.wav",
+    )
+
+    engine_request_payload = {
+        "normalized_audio_path": str(normalized_audio_path),
+        "original_audio_filename": audio_upload.original_filename,
+        "pdf_path": str(pdf_path),
+    }
+
     analysis = Analysis(
         note_id=note_id,
         user_id=current_user.user_id,
@@ -103,7 +143,7 @@ def create_analysis(
         trigger_type="manual",
         worker_id=None,
         error_code=None,
-        error_message=None,
+        error_message=f"engine_request={engine_request_payload}",
         started_at=func.now(),
         finished_at=None,
     )

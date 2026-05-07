@@ -33,13 +33,21 @@ S3_REGION = os.getenv("AWS_REGION")
 S3_PRESIGN_EXPIRATION = int(os.getenv("S3_PRESIGN_EXPIRATION", DUMMY_EXPIRES_IN))
 
 ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".ppt", ".pptx"}
-ALLOWED_AUDIO_EXTENSIONS = {".wav"}
+ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 ALLOWED_DOCUMENT_MIME_TYPES = {
     "application/pdf",
     "application/vnd.ms-powerpoint",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
-ALLOWED_AUDIO_MIME_TYPES = {"audio/wav", "audio/x-wav", "audio/wave"}
+ALLOWED_AUDIO_MIME_TYPES = {
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/mp4",
+    "audio/x-m4a",
+}
 
 
 def validate_upload_request(payload: UploadPresignRequest):
@@ -63,13 +71,13 @@ def validate_upload_request(payload: UploadPresignRequest):
         if extension not in ALLOWED_AUDIO_EXTENSIONS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="허용된 음성 형식은 WAV 입니다.",
+                detail="허용된 음성 형식은 MP3, WAV, M4A 입니다.",
             )
 
         if content_type and content_type != "application/octet-stream" and content_type not in ALLOWED_AUDIO_MIME_TYPES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="허용된 음성 MIME 타입은 WAV 입니다.",
+                detail="허용된 음성 MIME 타입은 MP3, WAV, M4A 입니다.",
             )
     else:
         raise HTTPException(

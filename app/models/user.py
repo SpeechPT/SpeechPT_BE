@@ -26,3 +26,5 @@ class User(Base):
     notes = relationship("Note", back_populates="user", cascade="all, delete-orphan")
     uploads = relationship("Upload", back_populates="user", cascade="all, delete-orphan")
     analyses = relationship("Analysis", back_populates="user", cascade="all, delete-orphan")
+    practice_sessions = relationship("PracticeSession", back_populates="user", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

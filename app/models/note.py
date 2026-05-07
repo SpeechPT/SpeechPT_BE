@@ -29,3 +29,4 @@ class Note(Base):
     user = relationship("User", back_populates="notes")
     uploads = relationship("Upload", back_populates="note", cascade="all, delete-orphan")
     analyses = relationship("Analysis", back_populates="note", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="note", cascade="all, delete-orphan")

@@ -2,3 +2,10 @@ from app.models.user import User
 from app.models.note import Note
 from app.models.upload import Upload
 from app.models.analysis import Analysis
+from app.models.analysis_input import AnalysisInput
+from app.models.analysis_result import AnalysisResult
+from app.models.analysis_section import AnalysisSection
+from app.models.practice_session import PracticeSession
+from app.models.practice_result import PracticeResult
+from app.models.chat_session import ChatSession
+from app.models.chat_message import ChatMessage

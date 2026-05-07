@@ -60,10 +60,10 @@ def _ensure_email_domain(email: str, provider: Provider) -> None:
 
 def _build_oauth_url(provider: Provider) -> str:
     if provider == Provider.google:
-        if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
+        if not GOOGLE_OAUTH_CLIENT_ID:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Google OAuth 설정이 올바르지 않습니다.",
+                detail="Google OAuth Client ID 설정이 올바르지 않습니다.",
             )
 
         query = {
@@ -188,11 +188,25 @@ def _create_or_get_user_from_google(payload: dict, provider: Provider, db: Sessi
         db.add(user)
         db.commit()
         db.refresh(user)
-    elif user.provider != provider.value:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이 이메일은 다른 로그인 방식으로 이미 등록되어 있습니다.",
-        )
+    else:
+        updated = False
+
+        # Same verified Google email should log into the existing account
+        # instead of being blocked by a provider mismatch.
+        google_subject = payload.get("sub") or email
+        if user.provider != provider.value:
+            user.provider = provider.value
+            updated = True
+        if user.provider_id != google_subject:
+            user.provider_id = google_subject
+            updated = True
+        if payload.get("name") and user.name != payload.get("name"):
+            user.name = payload.get("name")
+            updated = True
+
+        if updated:
+            db.commit()
+            db.refresh(user)
 
     return user
 
@@ -271,20 +285,25 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
     else:
-        if user.provider != provider.value:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="이 이메일은 다른 로그인 방식으로 이미 등록되어 있습니다.",
-            )
-
         if provider == Provider.local:
-            if not password or not verify_password(password, user.password_hash or ""):
+            if not user.password_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="이 계정은 비밀번호 로그인 설정이 되어 있지 않습니다. Google 로그인을 사용해주세요.",
+                )
+
+            if not password or not verify_password(password, user.password_hash):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="이메일 또는 비밀번호가 올바르지 않습니다.",
                 )
         else:
             _ensure_email_domain(email, provider)
+            if user.provider != provider.value:
+                user.provider = provider.value
+                user.provider_id = user.provider_id or email
+                db.commit()
+                db.refresh(user)
 
     token_data = {
         "user_id": str(user.user_id),
