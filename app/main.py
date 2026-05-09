@@ -10,10 +10,11 @@ load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 from app.db import Base, engine 
 from app import models
-from app.routers.note import router as note_router  
+from app.routers.note import router as note_router
 from app.routers.upload import router as upload_router
 from app.routers.analysis import router as analysis_router
 from app.routers.auth import router as auth_router
+from app.routers.chat import router as chat_router
 
 app = FastAPI(title="SpeechPT API")
 
@@ -35,6 +36,7 @@ app.include_router(auth_router)
 app.include_router(note_router)
 app.include_router(upload_router)
 app.include_router(analysis_router)
+app.include_router(chat_router)
 
 
 @app.on_event("startup")

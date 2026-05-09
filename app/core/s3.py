@@ -43,4 +43,8 @@ def get_object_json(object_key: str, bucket: Optional[str] = None) -> dict:
     """JSON 객체를 dict로 로드."""
     target_bucket = bucket or RESULTS_BUCKET
     obj = _s3.get_object(Bucket=target_bucket, Key=object_key)
+<<<<<<< HEAD
     return json.loads(obj["Body"].read())
+=======
+    return json.loads(obj["Body"].read())
+>>>>>>> b7c9480 (버그 수정 및 개선)

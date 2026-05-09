@@ -53,6 +53,7 @@ class Analysis(Base):
     worker_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)

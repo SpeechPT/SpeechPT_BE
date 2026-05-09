@@ -68,6 +68,7 @@ class AnalysisResultResponse(BaseModel):
     analysis_id: UUID
     status: str
     is_ready: bool
+    transcript: Optional[str] = None
     scores: Optional[AnalysisScoreResponse] = None
     summary: Optional[str] = None
     strengths: list[AnalysisStrengthItem] = Field(default_factory=list)

@@ -58,7 +58,7 @@ def _ensure_email_domain(email: str, provider: Provider) -> None:
         )
 
 
-def _build_oauth_url(provider: Provider) -> str:
+def _build_oauth_url(provider: Provider, login_hint: Optional[str] = None, auto: bool = False) -> str:
     if provider == Provider.google:
         if not GOOGLE_OAUTH_CLIENT_ID:
             raise HTTPException(
@@ -66,15 +66,18 @@ def _build_oauth_url(provider: Provider) -> str:
                 detail="Google OAuth Client ID 설정이 올바르지 않습니다.",
             )
 
+        prompt_value = "none" if auto else "select_account"
         query = {
             "client_id": GOOGLE_OAUTH_CLIENT_ID,
             "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
             "response_type": "code",
             "scope": "openid email profile",
             "access_type": "offline",
-            "prompt": "select_account",
+            "prompt": prompt_value,
             "state": provider.value,
         }
+        if login_hint:
+            query["login_hint"] = login_hint
         return f"{GOOGLE_AUTH_ENDPOINT}?{urllib.parse.urlencode(query)}"
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원되지 않는 OAuth 제공자입니다.")
@@ -223,16 +226,28 @@ def _redirect_with_tokens(access_token: str, refresh_token: str) -> RedirectResp
 
 
 @router.get("/oauth/login")
-def oauth_login(provider: Provider = Query(Provider.google, description="google")):
-    return RedirectResponse(url=_build_oauth_url(provider))
+def oauth_login(
+    provider: Provider = Query(Provider.google, description="google"),
+    login_hint: Optional[str] = Query(None, description="Google login_hint 이메일"),
+    auto: bool = Query(False, description="자동 로그인을 시도할지 여부"),
+):
+    return RedirectResponse(url=_build_oauth_url(provider, login_hint, auto))
 
 
 @router.get("/oauth/callback")
 def oauth_callback(
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    login_hint: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
+    if error:
+        # silent auth failed; fallback to normal Google account selection.
+        return RedirectResponse(
+            url=_build_oauth_url(Provider.google, login_hint=login_hint, auto=False)
+        )
+
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -48,3 +48,14 @@ class ChatMessageResponse(BaseModel):
 class ChatMessageListResponse(BaseModel):
     items: list[ChatMessageResponse]
     total: int
+
+
+class ChatReplyRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=3000)
+
+
+class ChatReplyResponse(BaseModel):
+    session_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    answer: str
