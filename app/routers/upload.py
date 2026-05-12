@@ -264,6 +264,60 @@ def complete_upload(
     }
 
 
+@router.get("/{upload_id}/file")
+async def serve_upload_file(
+    upload_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """업로드된 파일을 스트리밍으로 반환한다 (문서 미리보기 복원용)."""
+    from fastapi.responses import FileResponse, RedirectResponse
+
+    upload = (
+        db.query(Upload)
+        .filter(Upload.upload_id == upload_id, Upload.user_id == current_user.user_id)
+        .first()
+    )
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="업로드 파일을 찾을 수 없습니다.")
+
+    if upload.storage == "local":
+        if not upload.url:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="파일 경로가 기록되지 않았습니다.")
+        file_path = Path(upload.url)
+        if not file_path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="파일이 서버에 존재하지 않습니다.")
+        return FileResponse(
+            path=str(file_path),
+            media_type=upload.content_type or "application/octet-stream",
+            filename=upload.original_filename,
+        )
+
+    if upload.storage == "s3":
+        try:
+            import boto3
+            from botocore.config import Config
+
+            s3_client = boto3.session.Session().client(
+                "s3",
+                region_name=S3_REGION,
+                config=Config(signature_version="s3v4"),
+            )
+            presigned_url = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": upload.bucket, "Key": upload.object_key},
+                ExpiresIn=3600,
+            )
+            return RedirectResponse(url=presigned_url)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 다운로드 URL 생성 실패: {exc}",
+            )
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="알 수 없는 스토리지 타입입니다.")
+
+
 @router.get("/{upload_id}", response_model=UploadResponse)
 def get_upload(
     upload_id: UUID,

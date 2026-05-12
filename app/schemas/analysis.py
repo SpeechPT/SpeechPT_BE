@@ -74,6 +74,8 @@ class AnalysisResultResponse(BaseModel):
     strengths: list[AnalysisStrengthItem] = Field(default_factory=list)
     improvements: list[AnalysisImprovementItem] = Field(default_factory=list)
     sections: list[AnalysisSectionResponse] = Field(default_factory=list)
+    document_upload_id: Optional[UUID] = None
+    document_filename: Optional[str] = None
 
 
 # ──────────────────────────────────────────

@@ -20,8 +20,4 @@ def enqueue_analysis(payload: dict) -> str:
         QueueUrl=QUEUE_URL,
         MessageBody=json.dumps(payload, ensure_ascii=False),
     )
-<<<<<<< HEAD
     return response["MessageId"]
-=======
-    return response["MessageId"]
->>>>>>> b7c9480 (버그 수정 및 개선)
