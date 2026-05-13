@@ -5,7 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+psycopg2://SPusers:1125@localhost:5433/SpeechPT",  # 로컬 개발 fallback
+    "postgresql+psycopg2://SPusers:1125@localhost:5432/SpeechPT",  # 로컬 개발 fallback
 )
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True, pool_recycle=3600)

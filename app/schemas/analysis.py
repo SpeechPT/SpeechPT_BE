@@ -1,8 +1,42 @@
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# ──────────────────────────────────────────
+# 모델 출력 제출 스키마 (Worker → Backend)
+# ──────────────────────────────────────────
+
+class AESegmentScores(BaseModel):
+    overall_delivery: float = Field(..., ge=0.0, le=1.0)
+    energy_drop_prob: float = Field(default=0.0, ge=0.0, le=1.0)
+    pitch_shift_prob: float = Field(default=0.0, ge=0.0, le=1.0)
+    speech_rate: float = Field(default=2.5, ge=0.0)
+
+
+class AESegment(BaseModel):
+    slide_id: int
+    start_sec: float
+    end_sec: float
+    scores: Optional[AESegmentScores] = None
+
+
+class SlideKeypoint(BaseModel):
+    slide_id: int
+    title: str
+    keypoints: List[str] = Field(default_factory=list)
+    full_text: str = ""
+
+
+class AnalysisSubmitRequest(BaseModel):
+    """워커가 모델 raw 출력을 백엔드에 제출할 때 사용하는 스키마."""
+    transcript: str = Field(..., description="STT 전체 대본")
+    ce_coverage: float = Field(..., ge=0.0, le=1.0, description="CE 전체 커버리지 (0~1)")
+    ce_covered_mask: List[bool] = Field(default_factory=list, description="키포인트별 커버 여부")
+    ae_segments: List[AESegment] = Field(default_factory=list, description="AE 슬라이드별 구간 점수")
+    slides: List[SlideKeypoint] = Field(default_factory=list, description="문서 파싱 결과")
 
 
 class AnalysisCreateRequest(BaseModel):

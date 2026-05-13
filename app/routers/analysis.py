@@ -28,6 +28,7 @@ from app.db import get_db
 from app.models.analysis import Analysis
 from app.models.analysis_input import AnalysisInput
 from app.models.analysis_result import AnalysisResult
+from app.models.analysis_section import AnalysisSection
 from app.models.note import Note
 from app.models.upload import Upload
 from app.models.user import User
@@ -36,7 +37,9 @@ from app.schemas.analysis import (
     AnalysisCreateResponse,
     AnalysisResultResponse,
     AnalysisStatusResponse,
+    AnalysisSubmitRequest,
 )
+from app.services.report_builder import build_report
 
 router = APIRouter(tags=["analyses"])
 
@@ -182,8 +185,27 @@ def _storage_uri(upload: Upload) -> str:
 
 
 def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, document_upload: Upload | None) -> dict:
-    """분석 결과 응답 dict를 생성하는 공통 헬퍼."""
+    """분석 결과 응답 dict를 생성하는 공통 헬퍼.
+
+    - 점수: analysis_results 테이블 컬럼
+    - summary/strengths/improvements: analysis_results.report_json
+    - sections: analysis_sections 테이블 (정규화 저장) → 없으면 report_json fallback
+    """
     report = result_row.report_json or {}
+
+    # analysis_sections 테이블에서 섹션 읽기 (order_index 순 정렬은 모델 relationship에서 보장)
+    sections = [
+        {
+            "section_index": sec.order_index,
+            "title": sec.title,
+            "start_time_sec": sec.start_time_sec or 0,
+            "end_time_sec": sec.end_time_sec or 0,
+            "score": (sec.score_json or {}).get("score", 0),
+            "feedback": (sec.feedback_json or {}).get("text", ""),
+        }
+        for sec in (analysis.sections or [])
+    ] or report.get("sections", [])  # 테이블이 비어있으면 report_json fallback
+
     return {
         "analysis_id": analysis.analysis_id,
         "status": analysis.status,
@@ -197,7 +219,7 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
         "summary": report.get("summary"),
         "strengths": report.get("strengths", []),
         "improvements": report.get("improvements", []),
-        "sections": report.get("sections", []),
+        "sections": sections,
         "document_upload_id": document_upload.upload_id if document_upload else None,
         "document_filename": document_upload.original_filename if document_upload else None,
     }
@@ -292,7 +314,6 @@ def get_analysis_result(
     )
 
     if result_row is None:
-        # 데이터 정합성 문제: status=done인데 결과 row가 없음
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="분석 결과 행이 존재하지 않습니다. 관리자에게 문의하세요.",
@@ -303,3 +324,103 @@ def get_analysis_result(
         if analysis.document_upload_id else None
     )
     return _build_result_payload(analysis, result_row, document_upload)
+
+
+# ──────────────────────────────────────────────────────────────
+# POST /analyses/{analysis_id}/submit-result
+# 워커가 모델 raw 출력을 제출 → report_builder 알고리즘 실행 → DB 저장
+# ──────────────────────────────────────────────────────────────
+
+@router.post("/analyses/{analysis_id}/submit-result", status_code=status.HTTP_200_OK)
+def submit_analysis_result(
+    analysis_id: UUID,
+    payload: AnalysisSubmitRequest,
+    db: Session = Depends(get_db),
+):
+    """워커가 STT/CE/AE raw 출력을 보내면 report_builder 알고리즘으로 가공 후 DB에 저장.
+
+    워커는 모델 raw 값만 보내고, 점수 계산·섹션·강점·개선점·요약 생성은
+    백엔드 알고리즘(report_builder.py)이 담당한다.
+    """
+    analysis = db.query(Analysis).filter(Analysis.analysis_id == analysis_id).first()
+    if analysis is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="분석을 찾을 수 없습니다.")
+    if analysis.status == "done":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 완료된 분석입니다.")
+
+    # 워커 payload → report_builder 입력 형식으로 변환
+    ce_result = {
+        "coverage": payload.ce_coverage,
+        "covered_mask": payload.ce_covered_mask,
+    }
+    ae_result = {
+        "segments": [
+            {
+                "slide_id": seg.slide_id,
+                "start_sec": seg.start_sec,
+                "end_sec": seg.end_sec,
+                "scores": seg.scores.model_dump() if seg.scores else None,
+            }
+            for seg in payload.ae_segments
+        ]
+    }
+    slides = [s.model_dump() for s in payload.slides]
+
+    # 알고리즘 실행: raw 값 → 점수 + report_json + sections
+    result = build_report(
+        transcript=payload.transcript,
+        ce_result=ce_result,
+        ae_result=ae_result,
+        slides=slides,
+    )
+
+    sections = result["report"].pop("sections", [])  # 섹션은 analysis_sections 테이블에 별도 저장
+
+    # ── analysis_results 테이블: 점수 + summary/strengths/improvements ──
+    existing = db.query(AnalysisResult).filter(AnalysisResult.analysis_id == analysis_id).first()
+    if existing:
+        existing.content_coverage = result["scores"]["content_coverage"]
+        existing.delivery_stability = result["scores"]["delivery_stability"]
+        existing.pacing_score = result["scores"]["pacing_score"]
+        existing.overall_score = result["scores"]["overall_score"]
+        existing.severity_json = result["severity"]
+        existing.report_json = result["report"]  # sections 제외
+    else:
+        db.add(AnalysisResult(
+            analysis_id=analysis_id,
+            content_coverage=result["scores"]["content_coverage"],
+            delivery_stability=result["scores"]["delivery_stability"],
+            pacing_score=result["scores"]["pacing_score"],
+            overall_score=result["scores"]["overall_score"],
+            severity_json=result["severity"],
+            report_json=result["report"],  # sections 제외
+        ))
+
+    # ── analysis_sections 테이블: 섹션별 행으로 정규화 저장 ──
+    # 기존 섹션 삭제 후 재삽입 (재분석 시 덮어쓰기)
+    db.query(AnalysisSection).filter(AnalysisSection.analysis_id == analysis_id).delete()
+    for sec in sections:
+        db.add(AnalysisSection(
+            analysis_id=analysis_id,
+            order_index=sec["section_index"],
+            title=sec["title"],
+            start_time_sec=sec["start_time_sec"],
+            end_time_sec=sec["end_time_sec"],
+            score_json={"score": sec["score"]},
+            feedback_json={"text": sec["feedback"]},
+        ))
+
+    # ── analyses 테이블: 상태 + 대본 ──
+    analysis.transcript = payload.transcript
+    analysis.status = "done"
+    analysis.progress = 100
+    analysis.stage = "finished"
+    analysis.finished_at = datetime.now(timezone.utc)
+
+    db.commit()
+
+    return {
+        "analysis_id": analysis_id,
+        "status": "done",
+        "scores": result["scores"],
+    }
