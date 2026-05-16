@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
 from app.db import get_db
+from app.models.analysis import Analysis
 from app.models.note import Note
 from app.models.user import User
 from app.schemas.note import NoteCreate, NoteListResponse, NoteResponse, NoteUpdate
@@ -129,7 +130,14 @@ def delete_note(note_id: UUID, db: Session = Depends(get_db), current_user: User
             detail="노트를 찾을 수 없습니다.",
         )
 
-    # DB에서 삭제 후 커밋
+    # analyses → uploads 순서로 삭제해야 RESTRICT 제약 위반을 피할 수 있음.
+    # Analysis.document_upload_id / audio_upload_id 가 uploads 를 RESTRICT 참조하므로
+    # analyses 를 먼저 flush 해 DB 에서 제거한 뒤 note(→ uploads cascade) 를 삭제한다.
+    analyses = db.query(Analysis).filter(Analysis.note_id == note_id).all()
+    for analysis in analyses:
+        db.delete(analysis)
+    db.flush()
+
     db.delete(note)
     db.commit()
     return None
