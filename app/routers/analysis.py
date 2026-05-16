@@ -39,7 +39,7 @@ from app.schemas.analysis import (
     AnalysisStatusResponse,
     AnalysisSubmitRequest,
 )
-from app.services.report_builder import build_report
+from app.services.report_builder import build_report_from_model
 
 router = APIRouter(tags=["analyses"])
 
@@ -212,7 +212,7 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
         "is_ready": True,
         "transcript": analysis.transcript,
         "scores": {
-            "content_coverage": result_row.content_coverage,
+            "content_coverage_user": result_row.content_coverage,
             "delivery_stability": result_row.delivery_stability,
             "pacing_score": result_row.pacing_score,
         },
@@ -220,6 +220,7 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
         "strengths": report.get("strengths", []),
         "improvements": report.get("improvements", []),
         "sections": sections,
+        "reliability": report.get("reliability"),
         "document_upload_id": document_upload.upload_id if document_upload else None,
         "document_filename": document_upload.original_filename if document_upload else None,
     }
@@ -328,7 +329,7 @@ def get_analysis_result(
 
 # ──────────────────────────────────────────────────────────────
 # POST /analyses/{analysis_id}/submit-result
-# 워커가 모델 raw 출력을 제출 → report_builder 알고리즘 실행 → DB 저장
+# 워커가 모델 report.json을 제출 → 모델 값 그대로 DB 저장
 # ──────────────────────────────────────────────────────────────
 
 @router.post("/analyses/{analysis_id}/submit-result", status_code=status.HTTP_200_OK)
@@ -337,10 +338,9 @@ def submit_analysis_result(
     payload: AnalysisSubmitRequest,
     db: Session = Depends(get_db),
 ):
-    """워커가 STT/CE/AE raw 출력을 보내면 report_builder 알고리즘으로 가공 후 DB에 저장.
+    """워커가 모델 report.json 전체를 보내면 DB에 저장.
 
-    워커는 모델 raw 값만 보내고, 점수 계산·섹션·강점·개선점·요약 생성은
-    백엔드 알고리즘(report_builder.py)이 담당한다.
+    모델이 이미 계산한 점수·LLM 피드백·섹션 데이터를 그대로 사용한다.
     """
     analysis = db.query(Analysis).filter(Analysis.analysis_id == analysis_id).first()
     if analysis is None:
@@ -348,38 +348,16 @@ def submit_analysis_result(
     if analysis.status == "done":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 완료된 분석입니다.")
 
-    # 워커 payload → report_builder 입력 형식으로 변환
-    ce_result = {
-        "coverage": payload.ce_coverage,
-        "covered_mask": payload.ce_covered_mask,
-    }
-    ae_result = {
-        "segments": [
-            {
-                "slide_id": seg.slide_id,
-                "start_sec": seg.start_sec,
-                "end_sec": seg.end_sec,
-                "scores": seg.scores.model_dump() if seg.scores else None,
-            }
-            for seg in payload.ae_segments
-        ]
-    }
-    slides = [s.model_dump() for s in payload.slides]
-
-    # 알고리즘 실행: raw 값 → 점수 + report_json + sections
-    result = build_report(
-        transcript=payload.transcript,
-        ce_result=ce_result,
-        ae_result=ae_result,
-        slides=slides,
-    )
+    # 모델 출력 → DB 저장 형식으로 변환 (점수·텍스트 모두 모델 값 직접 사용)
+    result = build_report_from_model(payload.model_dump())
 
     sections = result["report"].pop("sections", [])  # 섹션은 analysis_sections 테이블에 별도 저장
+    transcript = result.pop("transcript", "")  # analyses 테이블에 직접 저장
 
     # ── analysis_results 테이블: 점수 + summary/strengths/improvements ──
     existing = db.query(AnalysisResult).filter(AnalysisResult.analysis_id == analysis_id).first()
     if existing:
-        existing.content_coverage = result["scores"]["content_coverage"]
+        existing.content_coverage = result["scores"]["content_coverage_user"]
         existing.delivery_stability = result["scores"]["delivery_stability"]
         existing.pacing_score = result["scores"]["pacing_score"]
         existing.overall_score = result["scores"]["overall_score"]
@@ -388,7 +366,7 @@ def submit_analysis_result(
     else:
         db.add(AnalysisResult(
             analysis_id=analysis_id,
-            content_coverage=result["scores"]["content_coverage"],
+            content_coverage=result["scores"]["content_coverage_user"],
             delivery_stability=result["scores"]["delivery_stability"],
             pacing_score=result["scores"]["pacing_score"],
             overall_score=result["scores"]["overall_score"],
@@ -411,7 +389,7 @@ def submit_analysis_result(
         ))
 
     # ── analyses 테이블: 상태 + 대본 ──
-    analysis.transcript = payload.transcript
+    analysis.transcript = transcript
     analysis.status = "done"
     analysis.progress = 100
     analysis.stage = "finished"
