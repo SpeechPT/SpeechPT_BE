@@ -271,7 +271,7 @@ async def serve_upload_file(
     current_user: User = Depends(get_current_user),
 ):
     """업로드된 파일을 스트리밍으로 반환한다 (문서 미리보기 복원용)."""
-    from fastapi.responses import FileResponse, RedirectResponse
+    from fastapi.responses import FileResponse
 
     upload = (
         db.query(Upload)
@@ -297,6 +297,7 @@ async def serve_upload_file(
         try:
             import boto3
             from botocore.config import Config
+            from fastapi.responses import JSONResponse
 
             s3_client = boto3.session.Session().client(
                 "s3",
@@ -308,7 +309,11 @@ async def serve_upload_file(
                 Params={"Bucket": upload.bucket, "Key": upload.object_key},
                 ExpiresIn=3600,
             )
-            return RedirectResponse(url=presigned_url)
+            return JSONResponse({
+                "preview_url": presigned_url,
+                "filename": upload.original_filename,
+                "content_type": upload.content_type or "application/octet-stream",
+            })
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

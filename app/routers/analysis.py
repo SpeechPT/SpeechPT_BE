@@ -227,6 +227,43 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
 
 
 # ──────────────────────────────────────────────────────────────
+# GET /notes/{note_id}/analyses/history
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/notes/{note_id}/analyses/history")
+def get_analysis_history(
+    note_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """노트의 완료된 분석 목록을 시간순으로 반환 (히스토리 그래프용)."""
+    rows = (
+        db.query(Analysis, AnalysisResult)
+        .join(AnalysisResult, AnalysisResult.analysis_id == Analysis.analysis_id)
+        .filter(
+            Analysis.note_id == note_id,
+            Analysis.user_id == current_user.user_id,
+            Analysis.status == "done",
+        )
+        .order_by(Analysis.finished_at.asc().nulls_last())
+        .all()
+    )
+    return [
+        {
+            "analysis_id": str(analysis.analysis_id),
+            "label": f"{i + 1}차",
+            "finished_at": analysis.finished_at.isoformat() if analysis.finished_at else None,
+            "scores": {
+                "content_coverage_user": result_row.content_coverage,
+                "delivery_stability": result_row.delivery_stability,
+                "pacing_score": result_row.pacing_score,
+            },
+        }
+        for i, (analysis, result_row) in enumerate(rows)
+    ]
+
+
+# ──────────────────────────────────────────────────────────────
 # GET /notes/{note_id}/analyses/latest/result
 # ──────────────────────────────────────────────────────────────
 
