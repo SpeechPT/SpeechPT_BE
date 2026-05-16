@@ -221,7 +221,7 @@ def _redirect_with_tokens(access_token: str, refresh_token: str) -> RedirectResp
             "refresh_token": refresh_token,
         }
     )
-    redirect_url = f"{FRONTEND_URL}/note.html?{query}"
+    redirect_url = f"{FRONTEND_URL}/index.html?{query}"
     return RedirectResponse(url=redirect_url)
 
 
