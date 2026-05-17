@@ -50,6 +50,11 @@ def build_report_from_model(payload: Dict[str, Any]) -> Dict[str, Any]:
         sc["slide_id"]: sc["comment"]
         for sc in llm_feedback.get("slide_comments") or []
     }
+    transcript_by_slide: Dict[int, List[str]] = {}
+    for seg in transcript_segments:
+        sid = seg.get("slide_id")
+        if sid is not None:
+            transcript_by_slide.setdefault(sid, []).append(seg.get("text", ""))
 
     # ── 섹션 목록 ───────────────────────────────────────────────
     sections: List[Dict] = []
@@ -80,6 +85,8 @@ def build_report_from_model(payload: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 feedback = "안정적인 발화"
 
+        slide_transcript = " ".join(transcript_by_slide.get(slide_id, []))
+
         sections.append({
             "section_index": i + 1,
             "title": f"슬라이드 {slide_id}",
@@ -87,6 +94,7 @@ def build_report_from_model(payload: Dict[str, Any]) -> Dict[str, Any]:
             "end_time_sec": int(end_sec),
             "score": section_score,
             "feedback": feedback,
+            "transcript": slide_transcript,
         })
 
     # ── 요약: 모델 LLM overall_comment 직접 사용 ───────────────

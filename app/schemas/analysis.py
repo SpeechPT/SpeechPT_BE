@@ -156,6 +156,7 @@ class AnalysisSectionResponse(BaseModel):
     end_time_sec: int
     score: int = Field(..., ge=0, le=100)
     feedback: str
+    transcript: Optional[str] = None
 
 
 class AnalysisResultResponse(BaseModel):

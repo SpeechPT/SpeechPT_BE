@@ -202,6 +202,7 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
             "end_time_sec": sec.end_time_sec or 0,
             "score": (sec.score_json or {}).get("score", 0),
             "feedback": (sec.feedback_json or {}).get("text", ""),
+            "transcript": (sec.feedback_json or {}).get("transcript", ""),
         }
         for sec in (analysis.sections or [])
     ] or report.get("sections", [])  # 테이블이 비어있으면 report_json fallback
@@ -432,7 +433,7 @@ def submit_analysis_result(
             start_time_sec=sec["start_time_sec"],
             end_time_sec=sec["end_time_sec"],
             score_json={"score": sec["score"]},
-            feedback_json={"text": sec["feedback"]},
+            feedback_json={"text": sec["feedback"], "transcript": sec.get("transcript", "")},
         ))
 
     # ── analyses 테이블: 상태 + 대본 ──
