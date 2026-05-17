@@ -64,7 +64,7 @@ def build_report_from_model(payload: Dict[str, Any]) -> Dict[str, Any]:
         ae_probe = slide.get("ae_probe") or {}
         ae_delivery = ae_probe.get("ae_probe_overall_delivery", 0.5)
         coverage = slide.get("coverage", 0.0)
-        section_score = max(0, min(100, round(ae_delivery * 100 * 0.6 + coverage * 100 * 0.4)))
+        section_score = max(0, min(100, round((ae_delivery * 100 + coverage * 100) / 2)))
 
         # 섹션 피드백: LLM slide_comment > highlight feedback > missed keypoints
         feedback = slide_comment_map.get(slide_id, "")
