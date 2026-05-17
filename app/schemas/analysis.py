@@ -171,6 +171,8 @@ class AnalysisResultResponse(BaseModel):
     reliability: Optional[Any] = None
     document_upload_id: Optional[UUID] = None
     document_filename: Optional[str] = None
+    audio_upload_id: Optional[UUID] = None
+    audio_filename: Optional[str] = None
 
 
 # ──────────────────────────────────────────

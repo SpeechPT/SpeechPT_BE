@@ -184,7 +184,7 @@ def _storage_uri(upload: Upload) -> str:
     return upload.url or upload.object_key
 
 
-def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, document_upload: Upload | None) -> dict:
+def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, document_upload: Upload | None, audio_upload: Upload | None = None) -> dict:
     """분석 결과 응답 dict를 생성하는 공통 헬퍼.
 
     - 점수: analysis_results 테이블 컬럼
@@ -223,6 +223,8 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
         "reliability": report.get("reliability"),
         "document_upload_id": document_upload.upload_id if document_upload else None,
         "document_filename": document_upload.original_filename if document_upload else None,
+        "audio_upload_id": audio_upload.upload_id if audio_upload else None,
+        "audio_filename": audio_upload.original_filename if audio_upload else None,
     }
 
 
@@ -293,7 +295,11 @@ def get_latest_analysis_result(
         db.query(Upload).filter(Upload.upload_id == analysis.document_upload_id).first()
         if analysis.document_upload_id else None
     )
-    return _build_result_payload(analysis, result_row, document_upload)
+    audio_upload = (
+        db.query(Upload).filter(Upload.upload_id == analysis.audio_upload_id).first()
+        if analysis.audio_upload_id else None
+    )
+    return _build_result_payload(analysis, result_row, document_upload, audio_upload)
 
 
 @router.get("/analyses/{analysis_id}/status", response_model=AnalysisStatusResponse)
@@ -361,7 +367,11 @@ def get_analysis_result(
         db.query(Upload).filter(Upload.upload_id == analysis.document_upload_id).first()
         if analysis.document_upload_id else None
     )
-    return _build_result_payload(analysis, result_row, document_upload)
+    audio_upload = (
+        db.query(Upload).filter(Upload.upload_id == analysis.audio_upload_id).first()
+        if analysis.audio_upload_id else None
+    )
+    return _build_result_payload(analysis, result_row, document_upload, audio_upload)
 
 
 # ──────────────────────────────────────────────────────────────
