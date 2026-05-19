@@ -193,6 +193,13 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
     """
     report = result_row.report_json or {}
 
+    # transcript_segments에서 슬라이드별 대본 구성 (report_json에 저장된 워커 출력)
+    transcript_by_slide: dict[int, list[str]] = {}
+    for seg in (report.get("transcript_segments") or []):
+        sid = seg.get("slide_id")
+        if sid is not None:
+            transcript_by_slide.setdefault(int(sid), []).append(seg.get("text", "") or "")
+
     # analysis_sections 테이블에서 섹션 읽기 (order_index 순 정렬은 모델 relationship에서 보장)
     sections = [
         {
@@ -202,10 +209,17 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
             "end_time_sec": sec.end_time_sec or 0,
             "score": (sec.score_json or {}).get("score", 0),
             "feedback": (sec.feedback_json or {}).get("text", ""),
-            "transcript": (sec.feedback_json or {}).get("transcript", ""),
+            "transcript": (sec.feedback_json or {}).get("transcript", "")
+                or " ".join(transcript_by_slide.get(sec.order_index, [])),
         }
         for sec in (analysis.sections or [])
-    ] or report.get("sections", [])  # 테이블이 비어있으면 report_json fallback
+    ] or [
+        {
+            **sec,
+            "transcript": sec.get("transcript") or " ".join(transcript_by_slide.get(int(sec.get("section_index", 0)), [])),
+        }
+        for sec in report.get("sections", [])
+    ]
 
     return {
         "analysis_id": analysis.analysis_id,
