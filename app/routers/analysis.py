@@ -193,9 +193,16 @@ def _build_result_payload(analysis: Analysis, result_row: AnalysisResult, docume
     """
     report = result_row.report_json or {}
 
-    # transcript_segments에서 슬라이드별 대본 구성 (report_json에 저장된 워커 출력)
+    # transcript_segments에서 슬라이드별 대본 구성
+    # 신버전 워커: report_json["transcript_segments"] 직접 저장
+    # 구버전 워커: report_json["raw"]["transcript_segments"] 에 저장
+    raw_segs = (
+        report.get("transcript_segments")
+        or (report.get("raw") or {}).get("transcript_segments")
+        or []
+    )
     transcript_by_slide: dict[int, list[str]] = {}
-    for seg in (report.get("transcript_segments") or []):
+    for seg in raw_segs:
         sid = seg.get("slide_id")
         if sid is not None:
             transcript_by_slide.setdefault(int(sid), []).append(seg.get("text", "") or "")
