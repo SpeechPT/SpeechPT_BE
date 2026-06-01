@@ -213,15 +213,30 @@ def _format_history(messages: list[ChatMessage]) -> str:
 
 
 SYSTEM_PROMPT = """당신은 SpeechPT의 발표 코치 챗봇입니다.
-규칙:
+
+# 근거 규칙
 - 제공된 "분석 컨텍스트" 블록 안의 사실만 사용해 답하세요. 추측이나 외부 지식을 끌어오지 마세요.
 - 컨텍스트에 없는 내용은 "현재 분석 자료에는 그 정보가 없습니다"라고 솔직히 말하세요.
 - 비교/지난번 관련 청크가 없을 때는 비교를 시도하지 마세요.
-- 사용자에게 보일 표현은 친근한 한국어 존댓말로, 가능한 한 슬라이드 번호와 수치 근거를 곁들이세요.
-- 인용은 컨텍스트 항목 앞의 [N] 마커로만 표시하세요. UUID를 추측하지 마세요.
-- 출력은 반드시 다음 JSON 스키마를 따르세요:
-  {"answer": "<사용자에게 보일 한국어 답변. 인용은 본문 뒤에 [1][3] 같은 형식으로 부착>",
-   "used_markers": [1, 3]}
+- 어떤 청크를 근거로 썼는지는 used_markers 배열에만 넣고, 본문(answer)에는 **절대 [1], [2] 같은 대괄호 마커를 쓰지 마세요**. 마커 표시·각주·괄호 인용 모두 금지. 인용은 used_markers 한 곳에서만.
+
+# 표현 규칙
+- 친근한 한국어 존댓말로, 슬라이드 번호와 수치 근거를 자연스럽게 본문에 녹여 쓰세요.
+- 내부 분석 용어(pitch_shift, dwell, coverage, alignment confidence, semantic, threshold, probe 등)를 사용자에게 그대로 노출하지 마세요. 사용자 친화 표현으로 풀어 쓰세요.
+- 답변 길이는 보통 3~6문장. 액션이 여러 개면 불릿으로 정리하세요.
+
+# 마크다운 서식 규칙 (필수)
+- 답변(answer)은 GitHub-flavored Markdown으로 작성하세요.
+- 핵심 키워드·슬라이드 번호·점수 같은 강조 포인트는 **굵게** 표시.
+- 행동 가이드·연습 항목·체크리스트는 `-` 불릿 또는 `1.` 번호 리스트로.
+- 문단을 나눌 땐 빈 줄로 구분하세요.
+- 짧은 답이면 굳이 리스트로 만들지 말고 자연스러운 한두 문단으로.
+- 코드블록(```)이나 인라인 코드(`)는 사용하지 마세요. 표(table)도 가급적 피하세요.
+
+# 출력 스키마 (필수)
+반드시 아래 JSON 객체만 반환하세요. 코드블록·설명·머리말 금지.
+{"answer": "<마크다운 본문. 대괄호 마커·각주 없이 자연스러운 문장만>",
+ "used_markers": [1, 3]}
 """
 
 
@@ -302,24 +317,34 @@ def answer_question(
     except OpenAIClientError:
         raise
 
-    answer_text = (resp.get("answer") or "").strip()
-    if not answer_text:
-        answer_text = "답변 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
+    raw_answer = (resp.get("answer") or "").strip()
+    if not raw_answer:
+        raw_answer = "답변 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
+
+    # used_markers는 LLM이 본문 cleanup 전에 갖고 있던 인용 의도이므로 먼저 추출
+    markers_in_raw = set(_parse_markers(raw_answer))
+
+    # 사용자에게 보이는 답변에서는 [N] 마커·각주를 안전망으로 제거 (시스템 프롬프트 무시 대비)
+    answer_text = re.sub(r"\s*\[\d+\]", "", raw_answer).strip()
 
     markers = resp.get("used_markers")
     if not isinstance(markers, list):
-        markers = _parse_markers(answer_text)
-    body_markers = set(_parse_markers(answer_text))
+        markers = list(markers_in_raw)
     valid_markers = []
+    seen = set()
     for m in markers:
         try:
             n = int(m)
         except (TypeError, ValueError):
             continue
-        if 1 <= n <= len(chunks):
+        if 1 <= n <= len(chunks) and n not in seen:
             valid_markers.append(n)
-    # 답변 본문에 [N] 마커가 살아있는 항목만 인용으로 신뢰 (LLM이 used_markers만 부풀린 경우 제거)
-    valid_markers = [m for m in valid_markers if m in body_markers] or list(body_markers & set(range(1, len(chunks) + 1)))
+            seen.add(n)
+    # used_markers를 LLM이 부풀렸을 가능성: raw_answer에 [N]이 있었던 것 우선,
+    # 없으면 used_markers 그대로 신뢰
+    body_filtered = [m for m in valid_markers if m in markers_in_raw]
+    if body_filtered:
+        valid_markers = body_filtered
 
     citations = []
     for m in valid_markers:
