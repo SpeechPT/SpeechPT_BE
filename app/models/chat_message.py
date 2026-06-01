@@ -1,8 +1,8 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from app.db import Base
@@ -37,6 +37,12 @@ class ChatMessage(Base):
         UUID(as_uuid=True),
         ForeignKey("analysis_sections.section_id", ondelete="SET NULL"),
         nullable=True,
+    )
+    citations_json: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
     )
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

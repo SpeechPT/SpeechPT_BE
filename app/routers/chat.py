@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -9,65 +10,22 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user
 from app.db import get_db
 from app.models.analysis import Analysis
-from app.models.analysis_result import AnalysisResult
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.note import Note
 from app.models.user import User
-from app.schemas.chat import ChatMessageCreateRequest, ChatReplyRequest, ChatReplyResponse
+from app.schemas.chat import (
+    ChatMessageCreateRequest,
+    ChatReplyRequest,
+    ChatReplyResponse,
+    ChatSuggestionsResponse,
+)
+from app.services.chat_rag import answer_question
+from app.services.openai_client import OpenAIClientError
+from app.services.suggestions import build_suggestions
 
 router = APIRouter(tags=["chat"])
-
-
-def _build_mock_chat_answer(question: str, analysis: Analysis | None, result_row: AnalysisResult | None) -> str:
-    normalized_question = question.strip().lower()
-
-    if analysis is None or result_row is None:
-        return (
-            "아직 완료된 분석 결과가 없어서 자세한 답변은 어렵습니다. "
-            "먼저 문서와 음성을 업로드해 분석을 실행하면, 그 결과를 바탕으로 질문에 답할 수 있습니다."
-        )
-
-    report = result_row.report_json or {}
-    summary = report.get("summary") or "요약 데이터가 아직 없습니다."
-    strengths = report.get("strengths") or []
-    improvements = report.get("improvements") or []
-
-    if "요약" in normalized_question or "summary" in normalized_question:
-        return f"현재 분석 요약은 다음과 같습니다. {summary}"
-
-    if "강점" in normalized_question or "잘한" in normalized_question:
-        if strengths:
-            joined = " / ".join(item.get("text", "") for item in strengths[:3] if item.get("text"))
-            return f"현재 분석에서 잡힌 주요 강점은 다음과 같습니다. {joined}"
-        return "현재 분석 결과에는 강점 데이터가 아직 없습니다."
-
-    if "개선" in normalized_question or "부족" in normalized_question or "고쳐" in normalized_question:
-        if improvements:
-            joined = " / ".join(item.get("text", "") for item in improvements[:3] if item.get("text"))
-            return f"우선 개선이 필요한 포인트는 다음과 같습니다. {joined}"
-        return "현재 분석 결과에는 개선 포인트 데이터가 아직 없습니다."
-
-    if "점수" in normalized_question or "스코어" in normalized_question:
-        return (
-            "현재 점수는 "
-            f"내용 커버리지 {result_row.content_coverage}점, "
-            f"전달 안정성 {result_row.delivery_stability}점, "
-            f"발표 속도 {result_row.pacing_score}점입니다."
-        )
-
-    if "대본" in normalized_question or "stt" in normalized_question or "스크립트" in normalized_question:
-        transcript = (analysis.transcript or "").strip()
-        if transcript:
-            excerpt = transcript[:220]
-            suffix = "..." if len(transcript) > 220 else ""
-            return f"현재 변환된 대본 일부는 다음과 같습니다. {excerpt}{suffix}"
-        return "아직 STT 대본이 생성되지 않았습니다."
-
-    return (
-        f"질문하신 내용에 대해 현재 분석 기준으로 답하면, {summary} "
-        "지금은 임시 응답 로직이라 키워드 중심으로 답하고 있고, 이후 실제 LLM 연결 시 더 자연스럽고 자세한 답변으로 확장할 수 있습니다."
-    )
+logger = logging.getLogger(__name__)
 
 
 @router.get("/notes/{note_id}/chat")
@@ -114,10 +72,31 @@ def get_or_create_chat_session(
                 "role": m.role,
                 "content": m.content,
                 "created_at": m.created_at.isoformat(),
+                "citations": m.citations_json or [],
             }
             for m in messages
         ],
     }
+
+
+@router.get(
+    "/notes/{note_id}/chat/suggestions",
+    response_model=ChatSuggestionsResponse,
+)
+def get_chat_suggestions(
+    note_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    note = (
+        db.query(Note)
+        .filter(Note.note_id == note_id, Note.user_id == current_user.user_id)
+        .first()
+    )
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="노트를 찾을 수 없습니다.")
+    items = build_suggestions(db, user_id=current_user.user_id, note_id=note_id)
+    return {"items": items}
 
 
 @router.post(
@@ -205,39 +184,64 @@ def create_chat_reply(
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="채팅 세션을 찾을 수 없습니다.")
 
-    analysis = (
+    latest_analysis = (
         db.query(Analysis)
         .filter(
             Analysis.note_id == session.note_id,
             Analysis.user_id == current_user.user_id,
             Analysis.status == "done",
         )
-        .order_by(Analysis.finished_at.desc())
+        .order_by(Analysis.finished_at.desc().nullslast(), Analysis.created_at.desc())
         .first()
     )
-    result_row = None
-    if analysis is not None:
-        result_row = (
-            db.query(AnalysisResult)
-            .filter(AnalysisResult.analysis_id == analysis.analysis_id)
-            .first()
-        )
+
+    # 직전 6턴 히스토리
+    recent = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.chat_session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    recent_messages = list(reversed(recent))
 
     user_message = ChatMessage(
         chat_session_id=session_id,
         role="user",
         content=payload.question.strip(),
-        related_analysis_id=analysis.analysis_id if analysis else None,
+        related_analysis_id=latest_analysis.analysis_id if latest_analysis else None,
     )
     db.add(user_message)
     db.flush()
 
-    answer = _build_mock_chat_answer(payload.question, analysis, result_row)
+    intent_value: str | None = None
+    citations: list[dict] = []
+    try:
+        if latest_analysis is not None and latest_analysis.rag_indexed_at is None:
+            answer_text = (
+                "분석은 완료됐지만 챗봇 자료를 준비 중입니다. 1~2분 뒤 다시 시도해 주세요."
+            )
+        else:
+            result = answer_question(
+                db,
+                user_id=current_user.user_id,
+                note_id=session.note_id,
+                question=payload.question,
+                recent_messages=recent_messages,
+            )
+            answer_text = result["answer"]
+            citations = result.get("citations") or []
+            intent_value = result.get("intent")
+    except OpenAIClientError as exc:
+        logger.warning("LLM 호출 실패: %s", exc)
+        answer_text = "지금 답변을 만들 수 없습니다. 잠시 후 다시 시도해 주세요."
+
     assistant_message = ChatMessage(
         chat_session_id=session_id,
         role="assistant",
-        content=answer,
-        related_analysis_id=analysis.analysis_id if analysis else None,
+        content=answer_text,
+        related_analysis_id=latest_analysis.analysis_id if latest_analysis else None,
+        citations_json=citations,
     )
     db.add(assistant_message)
     session.updated_at = datetime.now(timezone.utc)
@@ -249,5 +253,7 @@ def create_chat_reply(
         "session_id": session.chat_session_id,
         "user_message_id": user_message.message_id,
         "assistant_message_id": assistant_message.message_id,
-        "answer": answer,
+        "answer": answer_text,
+        "citations": citations,
+        "intent": intent_value,
     }

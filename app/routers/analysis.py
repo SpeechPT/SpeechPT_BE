@@ -405,6 +405,7 @@ def get_analysis_result(
 def submit_analysis_result(
     analysis_id: UUID,
     payload: AnalysisSubmitRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """워커가 모델 report.json 전체를 보내면 DB에 저장.
@@ -466,8 +467,24 @@ def submit_analysis_result(
 
     db.commit()
 
+    # RAG 인덱싱 (best-effort). 실패해도 분석 응답 자체를 막지 않음.
+    raw_payload = payload.model_dump()
+    background_tasks.add_task(_run_rag_indexing, analysis_id, raw_payload)
+
     return {
         "analysis_id": analysis_id,
         "status": "done",
         "scores": result["scores"],
     }
+
+
+def _run_rag_indexing(analysis_id: UUID, raw_payload: dict) -> None:
+    """BackgroundTask 래퍼. 모듈을 지연 import하여 OpenAI 키 없을 때 import 실패 회피."""
+    try:
+        from app.services.rag_indexer import index_analysis
+
+        index_analysis(analysis_id, payload_override=raw_payload)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("RAG indexing failed for %s", analysis_id)

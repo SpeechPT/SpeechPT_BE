@@ -54,8 +54,29 @@ class ChatReplyRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=3000)
 
 
+class ChatCitation(BaseModel):
+    marker: int
+    chunk_id: UUID
+    chunk_type: str
+    slide_id: Optional[int] = None
+    start_sec: Optional[int] = None
+    end_sec: Optional[int] = None
+    attempt_index: Optional[int] = None
+
+
 class ChatReplyResponse(BaseModel):
     session_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
     answer: str
+    citations: list[ChatCitation] = Field(default_factory=list)
+    intent: Optional[str] = None
+
+
+class ChatSuggestionItem(BaseModel):
+    key: str
+    question: str
+
+
+class ChatSuggestionsResponse(BaseModel):
+    items: list[ChatSuggestionItem]

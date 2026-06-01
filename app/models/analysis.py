@@ -57,6 +57,7 @@ class Analysis(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rag_indexed_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="analyses")
     note = relationship("Note", back_populates="analyses")

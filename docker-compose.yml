@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:15
+    # pgvector 확장 프리설치된 PG15 (RAG 챗봇용). 데이터 디렉토리는 PG15 그대로 호환.
+    image: pgvector/pgvector:pg15
     container_name: speechpt-postgres
     restart: always
     environment:

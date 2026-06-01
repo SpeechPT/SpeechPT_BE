@@ -9,3 +9,4 @@ from app.models.practice_session import PracticeSession
 from app.models.practice_result import PracticeResult
 from app.models.chat_session import ChatSession
 from app.models.chat_message import ChatMessage
+from app.models.rag_chunk import RagChunk
