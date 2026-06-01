@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 앱 코드
 COPY app/ ./app/
-
+COPY scripts/ ./scripts/
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
