@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.analysis import Analysis
 from app.models.chat_message import ChatMessage
-from app.services.openai_client import OpenAIClientError, chat_responses_json, embed_texts
+from app.services.openai_client import OpenAIClientError, chat_responses_json, embed_texts, stream_chat_text
 
 logger = logging.getLogger(__name__)
 
@@ -364,5 +364,86 @@ def answer_question(
     return {
         "answer": answer_text,
         "citations": citations,
+        "intent": intent.kind.value,
+    }
+
+
+STREAM_SYSTEM_PROMPT = """당신은 SpeechPT의 발표 코치 챗봇입니다.
+
+# 근거 규칙
+- 제공된 "분석 컨텍스트" 블록 안의 사실만 사용해 답하세요. 추측이나 외부 지식을 끌어오지 마세요.
+- 컨텍스트에 없는 내용은 "현재 분석 자료에는 그 정보가 없습니다"라고 솔직히 말하세요.
+- 비교/지난번 관련 청크가 없을 때는 비교를 시도하지 마세요.
+- 답변에 [1], [2] 같은 대괄호 마커·각주를 쓰지 마세요.
+
+# 표현 규칙
+- 친근한 한국어 존댓말로, 슬라이드 번호와 수치 근거를 자연스럽게 본문에 녹여 쓰세요.
+- 내부 분석 용어(pitch_shift, dwell, coverage, alignment confidence, semantic, threshold, probe 등)를 사용자에게 그대로 노출하지 마세요. 사용자 친화 표현으로 풀어 쓰세요.
+- 답변 길이는 보통 3~6문장. 액션이 여러 개면 불릿으로 정리하세요.
+
+# 마크다운 서식 규칙 (필수)
+- GitHub-flavored Markdown으로 작성하세요.
+- 핵심 키워드·슬라이드 번호·점수 같은 강조 포인트는 **굵게** 표시.
+- 행동 가이드·연습 항목·체크리스트는 `-` 불릿 또는 `1.` 번호 리스트로.
+- 문단을 나눌 땐 빈 줄로 구분하세요.
+- 짧은 답이면 굳이 리스트로 만들지 말고 자연스러운 한두 문단으로.
+- 코드블록(```)이나 인라인 코드(`)는 사용하지 마세요.
+
+마크다운 본문만 반환하세요. JSON 래퍼 없이 자연스럽게."""
+
+_STREAM_USER_PROMPT_TEMPLATE = """=== 이전 대화 (직전 {history_turns}턴) ===
+{history}
+
+=== 분석 컨텍스트 ===
+{context}
+
+=== 사용자 질문 ===
+{question}
+
+위 컨텍스트만 근거로 마크다운 형식으로 자연스럽게 답변하세요."""
+
+
+def prepare_rag_context(
+    db: Session,
+    *,
+    user_id: UUID,
+    note_id: UUID,
+    question: str,
+    recent_messages: list[ChatMessage],
+    top_k: int = DEFAULT_TOP_K,
+) -> dict | None:
+    """임베딩+검색 단계만 실행하고 LLM 호출 없이 결과 반환.
+
+    반환: {"user_prompt": str, "intent": str} 또는 None (분석 없음 / 청크 없음)
+    """
+    intent = classify_intent(question)
+    latest_id = _latest_done_analysis_id(db, note_id, user_id)
+    if latest_id is None:
+        return None
+
+    embedding = embed_texts([question])[0]
+    chunks = _retrieve_chunks(
+        db,
+        user_id=user_id,
+        note_id=note_id,
+        latest_analysis_id=latest_id,
+        question_embedding=embedding,
+        intent=intent,
+        top_k=top_k,
+    )
+    if not chunks:
+        return None
+
+    context_block = _format_context_block(chunks)
+    history_block = _format_history(recent_messages[-MAX_HISTORY_TURNS:])
+    user_prompt = _STREAM_USER_PROMPT_TEMPLATE.format(
+        history_turns=MAX_HISTORY_TURNS,
+        history=history_block,
+        context=context_block,
+        question=question.strip(),
+    )
+
+    return {
+        "user_prompt": user_prompt,
         "intent": intent.kind.value,
     }

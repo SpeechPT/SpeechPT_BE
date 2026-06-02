@@ -11,7 +11,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Iterable
+from typing import Any, Generator, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ _DEFAULT_EMBED_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-
 _DEFAULT_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
 _EMBED_URL = "https://api.openai.com/v1/embeddings"
 _RESPONSES_URL = "https://api.openai.com/v1/responses"
+_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 _KEY_RE = re.compile(r"sk-[A-Za-z0-9_-]+")
 
@@ -124,3 +125,59 @@ def chat_responses_json(
     if not isinstance(obj, dict):
         raise OpenAIClientError("LLM 응답이 JSON 객체가 아닙니다.")
     return obj
+
+
+def stream_chat_text(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    max_tokens: int = 900,
+    temperature: float = 0.2,
+) -> Generator[str, None, None]:
+    """Call /v1/chat/completions with stream=True, yield text delta tokens."""
+    api_key = _resolve_key()
+    if not api_key:
+        raise OpenAIClientError("OPENAI_API_KEY가 설정되지 않았습니다.")
+
+    payload = {
+        "model": model or _DEFAULT_CHAT_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": True,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        _CHAT_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120.0) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].lstrip(" ")
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                    token = (obj["choices"][0]["delta"].get("content") or "")
+                    if token:
+                        yield token
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OpenAIClientError(f"OpenAI HTTP {exc.code}: {detail[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise OpenAIClientError(f"OpenAI connection error: {exc}") from exc
