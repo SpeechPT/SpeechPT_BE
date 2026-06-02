@@ -343,6 +343,9 @@ def create_chat_stream_reply(
                     yield f"data: {json.dumps({'type': 'token', 'token': msg}, ensure_ascii=False)}\n\n"
                 else:
                     chunks = ctx.get("chunks", [])
+                    # 강제 포함 청크 우선, 없으면 cosine 상위 3개
+                    forced = [c for c in chunks if c.get("forced")]
+                    cited = forced[:4] if forced else chunks[:3]
                     citations = [
                         {
                             "marker": i,
@@ -353,7 +356,7 @@ def create_chat_stream_reply(
                             "end_sec": c.get("end_sec"),
                             "attempt_index": c.get("attempt_index"),
                         }
-                        for i, c in enumerate(chunks[:6], start=1)
+                        for i, c in enumerate(cited, start=1)
                     ]
                     for token in stream_chat_text(
                         system_prompt=STREAM_SYSTEM_PROMPT,
