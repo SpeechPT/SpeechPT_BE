@@ -148,7 +148,7 @@ def stream_chat_text(
         ],
         "stream": True,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
     }
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(

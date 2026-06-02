@@ -446,4 +446,5 @@ def prepare_rag_context(
     return {
         "user_prompt": user_prompt,
         "intent": intent.kind.value,
+        "chunks": chunks,
     }

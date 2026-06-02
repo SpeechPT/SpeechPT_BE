@@ -317,6 +317,7 @@ def create_chat_stream_reply(
 
     def generate():
         tokens: list[str] = []
+        citations: list[dict] = []
 
         try:
             if latest_analysis is not None and rag_indexed is None:
@@ -341,6 +342,19 @@ def create_chat_stream_reply(
                     tokens.append(msg)
                     yield f"data: {json.dumps({'type': 'token', 'token': msg}, ensure_ascii=False)}\n\n"
                 else:
+                    chunks = ctx.get("chunks", [])
+                    citations = [
+                        {
+                            "marker": i,
+                            "chunk_id": str(c["chunk_id"]),
+                            "chunk_type": c["chunk_type"],
+                            "slide_id": c.get("slide_id"),
+                            "start_sec": c.get("start_sec"),
+                            "end_sec": c.get("end_sec"),
+                            "attempt_index": c.get("attempt_index"),
+                        }
+                        for i, c in enumerate(chunks[:6], start=1)
+                    ]
                     for token in stream_chat_text(
                         system_prompt=STREAM_SYSTEM_PROMPT,
                         user_prompt=ctx["user_prompt"],
@@ -365,7 +379,7 @@ def create_chat_stream_reply(
                     role="assistant",
                     content=answer_text,
                     related_analysis_id=analysis_id,
-                    citations_json=[],
+                    citations_json=citations,
                 )
                 chat_session = (
                     save_db.query(ChatSession)
@@ -381,7 +395,7 @@ def create_chat_stream_reply(
         except Exception as exc:
             logger.error("어시스턴트 메시지 저장 실패: %s", exc)
 
-        yield f"data: {json.dumps({'type': 'done', 'citations': []}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'citations': citations}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
